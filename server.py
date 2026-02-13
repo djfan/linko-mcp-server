@@ -40,6 +40,69 @@ else:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("linko-mcp-server")
 
+# In-memory log buffer for debugging
+class RingBufferHandler(logging.Handler):
+    def __init__(self, capacity=100):
+        super().__init__()
+        self.capacity = capacity
+        self.buffer = []
+    
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.buffer.append(f"{datetime.now().isoformat()} - {msg}")
+            if len(self.buffer) > self.capacity:
+                self.buffer.pop(0)
+        except Exception:
+            self.handleError(record)
+
+log_buffer = RingBufferHandler()
+formatter = logging.Formatter('%(levelname)s: %(message)s')
+log_buffer.setFormatter(formatter)
+logger.addHandler(log_buffer)
+# Also add to root logger to capture FastMCP/Uvicorn logs
+logging.getLogger().addHandler(log_buffer)
+
+# Middleware for detailed request logging
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = datetime.now()
+    path = request.url.path
+    method = request.method
+    logger.info(f"Incoming request: {method} {path}")
+    
+    # Log detailed auth headers for debugging (masked)
+    auth = request.headers.get("Authorization")
+    if auth:
+        logger.info(f"Auth header present: {auth[:10]}...")
+    
+    try:
+        response = await call_next(request)
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Request {method} {path} completed with status {response.status_code} in {duration:.3f}s")
+        return response
+    except Exception as e:
+        logger.error(f"Request {method} {path} failed: {traceback.format_exc()}")
+        raise e
+
+@app.get("/debug/auth")
+async def debug_auth_state():
+    """Debug endpoint to inspect active auth codes and config."""
+    return {
+        "server_url": SERVER_URL,
+        "linko_api": LINKO_API_BASE,
+        "active_codes_count": len(AUTH_CODES),
+        "active_codes_keys": list(AUTH_CODES.keys()),
+        # specific endpoint connectivity test
+        "linko_login_url": LINKO_LOGIN_URL
+    }
+
+@app.get("/debug/logs", response_class=HTMLResponse)
+async def debug_logs():
+    """View recent server logs."""
+    logs = "<br>".join(log_buffer.buffer)
+    return f"<html><body><h3>Recent Logs</h3><pre>{logs}</pre></body></html>"
+
 
 # ---------------------------------------------------------------------------
 # Global State (In-Memory)
