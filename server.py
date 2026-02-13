@@ -25,7 +25,7 @@ from pydantic import BaseModel
 # Configuration
 # ---------------------------------------------------------------------------
 
-LINKO_API_BASE = os.getenv("LINKO_API_BASE", "https://api.linko.study")
+LINKO_API_BASE = os.getenv("LINKO_API_BASE", "https://www.linko.study")
 LINKO_LOGIN_URL = f"{LINKO_API_BASE}/api/auth/login/"
 LINKO_ME_URL = f"{LINKO_API_BASE}/v1/me"
 
