@@ -1,0 +1,6 @@
+mcp
+fastmcp
+uvicorn
+requests
+httpx
+linko-mcp
