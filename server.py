@@ -62,7 +62,8 @@ class LinkoOAuthProvider(OAuthProvider):
 
     async def authorize(self, request: Request) -> Any:
         # Redirect to explicit login page
-        login_url = f"{SERVER_URL}/login"
+        # login_url = f"{SERVER_URL}/login"
+        login_url = f"https://www.linko.study/login"
         
         # Pass through all query parameters (including code_challenge)
         if request.query_params:
