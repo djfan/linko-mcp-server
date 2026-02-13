@@ -10,6 +10,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, List
 import secrets
+import traceback
 from datetime import datetime, timedelta
 
 import requests as http_requests
@@ -41,119 +42,52 @@ logger = logging.getLogger("linko-mcp-server")
 
 
 # ---------------------------------------------------------------------------
+# Global State (In-Memory)
+# ---------------------------------------------------------------------------
+# In a real production app, use Redis or a database.
+AUTH_CODES: Dict[str, Dict[str, Any]] = {}
+
+# ---------------------------------------------------------------------------
 # Linko OAuth Provider Implementation (for Claude)
 # ---------------------------------------------------------------------------
 
 class LinkoOAuthProvider(OAuthProvider):
     """
     Custom OAuth provider that bridges MCP's OAuth flow to Linko's auth system.
+    Authentication is handled via the /login endpoints defined below.
     """
     
     def __init__(self, base_url: str):
         super().__init__(base_url=base_url)
-        self._auth_codes: Dict[str, Dict[str, Any]] = {}
-        self._clients: Dict[str, Dict[str, Any]] = {}
 
     async def authorize(self, request: Request) -> Any:
+        # Redirect to our explicit login page
         params = request.query_params
-        client_id = params.get("client_id")
-        redirect_uri = params.get("redirect_uri")
-        state = params.get("state")
+        login_url = f"{SERVER_URL}/login"
         
-        # Auto-register unknown clients (for demo/dev simplicity)
-        if client_id and client_id not in self._clients:
-            logger.info(f"Auto-registering unknown client: {client_id}")
-            self._clients[client_id] = {
-                "client_id": client_id,
-                "redirect_uris": [redirect_uri] if redirect_uri else []
-            }
-
-        if request.method == "GET":
-            return self._render_login_form(
-                client_id=client_id,
-                redirect_uri=redirect_uri,
-                state=state
-            )
-            
-        if request.method == "POST":
-            return await self._process_login(request)
-
-    def _render_login_form(self, **kwargs) -> HTMLResponse:
-        html = f"""
-        <html>
-        <head>
-            <title>Login to Linko</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body {{ font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb; margin: 0; }}
-                .card {{ background: white; padding: 2rem; rounded: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 320px; text-align: center; border-radius: 8px; }}
-                input {{ display: block; width: 100%; padding: 0.75rem; margin: 0.5rem 0; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 16px; }}
-                button {{ background: #2563eb; color: white; border: none; padding: 0.75rem; width: 100%; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 1rem; font-size: 16px; }}
-                button:hover {{ background: #1d4ed8; }}
-                h2 {{ color: #111827; margin-bottom: 1.5rem; }}
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h2>Connect Linko</h2>
-                <form method="POST">
-                    <input type="hidden" name="client_id" value="{kwargs.get('client_id', '')}">
-                    <input type="hidden" name="redirect_uri" value="{kwargs.get('redirect_uri', '')}">
-                    <input type="hidden" name="state" value="{kwargs.get('state', '')}">
-                    
-                    <input type="email" name="username" placeholder="Email" required>
-                    <input type="password" name="password" placeholder="Password" required>
-                    <button type="submit">Sign In</button>
-                </form>
-            </div>
-        </body>
-        </html>
-        """
-        return HTMLResponse(html)
-
-    async def _process_login(self, request: Request) -> Any:
-        form = await request.form()
-        username = form.get("username")
-        password = form.get("password")
-        
-        try:
-            resp = http_requests.post(
-                LINKO_LOGIN_URL,
-                json={"email": username, "password": password},
-                timeout=10
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            linko_token = data.get("access")
-            
-            if not linko_token:
-                return HTMLResponse("Login failed: Linko API returned no token", status_code=401)
+        # Pass through the OAuth parameters
+        query = []
+        for key in ["client_id", "redirect_uri", "state"]:
+            if val := params.get(key):
+                query.append(f"{key}={val}")
                 
-        except Exception as e:
-            logger.error(f"Linko login failed: {e}")
-            return HTMLResponse(f"Login failed: Invalid credentials or API error", status_code=401)
-
-        code = secrets.token_urlsafe(32)
-        redirect_uri = form.get("redirect_uri")
-        state = form.get("state")
-        
-        self._auth_codes[code] = {
-            "linko_token": linko_token,
-            "expires_at": datetime.now().timestamp() + 300
-        }
-        
-        target = f"{redirect_uri}?code={code}&state={state}"
-        return RedirectResponse(target, status_code=302)
+        if query:
+            login_url += "?" + "&".join(query)
+            
+        return RedirectResponse(login_url)
 
     async def exchange_token(self, request: Request) -> Dict[str, Any]:
+        # This is called by FastMCP when it receives the code
         form = await request.form()
         code = form.get("code")
         
-        data = self._auth_codes.get(code)
+        data = AUTH_CODES.get(code)
         if not data or data["expires_at"] < datetime.now().timestamp():
             raise ValueError("Invalid or expired authorization code")
             
-        del self._auth_codes[code]
+        # Burn the code (one-time use)
+        if code in AUTH_CODES:
+            del AUTH_CODES[code]
         
         return {
             "access_token": data["linko_token"],
@@ -179,17 +113,6 @@ class LinkoOAuthProvider(OAuthProvider):
         except Exception:
             pass
         return {"active": False}
-        
-    def get_client(self, client_id: str) -> Optional[Dict[str, Any]]:
-        return self._clients.get(client_id)
-
-    def register_client(self, client_metadata: Dict[str, Any]) -> Dict[str, Any]:
-        client_id = secrets.token_urlsafe(16)
-        return self._clients.setdefault(client_id, {
-            "client_id": client_id,
-            "client_secret": secrets.token_urlsafe(32),
-            **client_metadata
-        })
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +203,93 @@ app = FastAPI(
     version="1.0",
     servers=[{"url": SERVER_URL}]
 )
+
+# ---------------------------------------------------------------------------
+# Explicit Auth Routes (Custom Login Page)
+# ---------------------------------------------------------------------------
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Renders the login page for Authenticating with Linko."""
+    params = request.query_params
+    client_id = params.get("client_id", "")
+    redirect_uri = params.get("redirect_uri", "")
+    state = params.get("state", "")
+    
+    html = f"""
+    <html>
+    <head>
+        <title>Login to Linko MCP</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {{ font-family: -apple-system, system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb; margin: 0; }}
+            .card {{ background: white; padding: 2rem; rounded: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 320px; text-align: center; border-radius: 8px; }}
+            input {{ display: block; width: 100%; padding: 0.75rem; margin: 0.5rem 0; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 16px; }}
+            button {{ background: #2563eb; color: white; border: none; padding: 0.75rem; width: 100%; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 1rem; font-size: 16px; }}
+            button:hover {{ background: #1d4ed8; }}
+            h2 {{ color: #111827; margin-bottom: 1.5rem; }}
+            .error {{ color: #dc2626; margin-bottom: 1rem; font-size: 14px; }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>Linko Sign In</h2>
+            <form method="POST">
+                <input type="hidden" name="client_id" value="{client_id}">
+                <input type="hidden" name="redirect_uri" value="{redirect_uri}">
+                <input type="hidden" name="state" value="{state}">
+                
+                <input type="email" name="username" placeholder="Email (Linko Account)" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Sign In</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+@app.post("/login")
+async def login_submit(request: Request):
+    """Handles login submission, verifies with Linko API, and redirects."""
+    try:
+        form = await request.form()
+        username = form.get("username")
+        password = form.get("password")
+        redirect_uri = form.get("redirect_uri")
+        state = form.get("state")
+        
+        # 1. Verify credentials with Linko
+        resp = http_requests.post(
+            LINKO_LOGIN_URL,
+            json={"email": username, "password": password},
+            timeout=10
+        )
+        
+        if resp.status_code != 200:
+            logger.warning(f"Login failed: {resp.status_code} {resp.text}")
+            return HTMLResponse(f"<h3>Login failed</h3><p>Invalid credentials or server error.</p><a href='/login?redirect_uri={redirect_uri}&state={state}'>Try again</a>", status_code=401)
+            
+        data = resp.json()
+        linko_token = data.get("access")
+        if not linko_token:
+            return HTMLResponse("<h3>Error</h3><p>No token received from Linko.</p>", status_code=500)
+
+        # 2. Generate Auth Code
+        code = secrets.token_urlsafe(32)
+        AUTH_CODES[code] = {
+            "linko_token": linko_token,
+            "expires_at": datetime.now().timestamp() + 300  # 5 minutes
+        }
+        
+        # 3. Redirect back to Custom GPT / Claude
+        target = f"{redirect_uri}?code={code}&state={state}"
+        logger.info(f"Login success. Redirecting to: {target}")
+        return RedirectResponse(target, status_code=302)
+        
+    except Exception as e:
+        logger.error(f"Login error: {traceback.format_exc()}")
+        return HTMLResponse(f"<h3>Server Error</h3><p>{str(e)}</p>", status_code=500)
 
 # Marketplace: Privacy Policy (Required for Public Actions)
 @app.get("/privacy", response_class=HTMLResponse)
