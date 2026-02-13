@@ -320,11 +320,16 @@ class GetResourcesRequest(BaseModel):
 # ChatGPT Endpoints
 @app.post("/chatgpt/search_notes", operation_id="searchNotes")
 async def chatgpt_search_notes(
+    request: Request,
     body: SearchNotesRequest,
-    authorization: str = Header(..., description="Bearer <token>")
 ):
     """Search Linko notes (ChatGPT Action)."""
-    token = authorization.removeprefix("Bearer ").strip()
+    # Extract token manually to avoid exposing it in OpenAPI schema
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+         raise HTTPException(status_code=401, detail="Missing or invalid Bearer token")
+    
+    token = auth_header.removeprefix("Bearer ").strip()
     client = _get_api_client(token)
     try:
         notes = client.get_notes_sync(keyword=body.keyword, limit=body.limit, subject_name=body.subject_name)
@@ -334,11 +339,15 @@ async def chatgpt_search_notes(
 
 @app.post("/chatgpt/get_resources", operation_id="getResources")
 async def chatgpt_get_resources(
+    request: Request,
     body: GetResourcesRequest,
-    authorization: str = Header(..., description="Bearer <token>")
 ):
     """Search Linko resources (ChatGPT Action)."""
-    token = authorization.removeprefix("Bearer ").strip()
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+         raise HTTPException(status_code=401, detail="Missing or invalid Bearer token")
+
+    token = auth_header.removeprefix("Bearer ").strip()
     client = _get_api_client(token)
     try:
         resources = client.get_resources_sync(keyword=body.keyword, limit=body.limit)
