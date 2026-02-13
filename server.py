@@ -59,11 +59,31 @@ class LinkoOAuthProvider(OAuthProvider):
     
     def __init__(self, base_url: str):
         super().__init__(base_url=base_url)
+        # Pre-register a default client for users who want fixed credentials
+        self.add_client(
+            client_id="linko",
+            client_secret="linko",
+            redirect_uri="https://chatgpt.com"
+        )
+        
+    async def get_client(self, client_id: str) -> Optional[Dict[str, Any]]:
+        # 1. Try to find registered client
+        client = self._clients.get(client_id)
+        if client:
+            return client
+            
+        # 2. Fallback: Allow any client_id (treat as public client / skip secret check)
+        return {
+            "client_id": client_id,
+            "redirect_uris": [],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none"
+        }
 
     async def authorize(self, request: Request) -> Any:
         # Redirect to explicit login page
-        # login_url = f"{SERVER_URL}/login"
-        login_url = f"https://www.linko.study/login"
+        login_url = f"{SERVER_URL}/login"
+        # login_url = f"https://www.linko.study/login"
         
         # Pass through all query parameters (including code_challenge)
         if request.query_params:
