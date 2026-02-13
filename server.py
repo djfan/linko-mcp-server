@@ -122,12 +122,6 @@ class LinkoOAuthProvider(OAuthProvider):
     
     def __init__(self, base_url: str):
         super().__init__(base_url=base_url)
-        # Pre-register a default client for users who want fixed credentials
-        self.add_client(
-            client_id="linko",
-            client_secret="linko",
-            redirect_uri="https://chatgpt.com"
-        )
         
     async def get_client(self, client_id: str) -> Optional[Dict[str, Any]]:
         # 1. Try to find registered client
