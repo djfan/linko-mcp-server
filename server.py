@@ -196,7 +196,7 @@ class LinkoOAuthProvider(OAuthProvider):
 # Setup FastMCP (for Claude)
 # ---------------------------------------------------------------------------
 
-auth_provider = LinkoOAuthProvider(base_url=SERVER_URL)
+auth_provider = LinkoOAuthProvider(base_url=f"{SERVER_URL}/mcp")
 mcp = FastMCP("Linko", auth=auth_provider)
 
 # Check for linko-mcp package
@@ -277,9 +277,9 @@ def _extract_token_from_ctx(ctx: Context) -> str:
 
 app = FastAPI(title="Linko Hybrid Server", version="1.0")
 
-# Mount MCP endpoints (sse, messages, authorize, etc.)
+# Mount MCP endpoints (sse, messages, authorize, etc.) at /mcp
 # This handles all Claude traffic automatically
-mcp.mount(app)
+app.mount("/mcp", mcp.http_app())
 
 # ChatGPT Request Models
 class SearchNotesRequest(BaseModel):
