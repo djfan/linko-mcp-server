@@ -61,18 +61,13 @@ class LinkoOAuthProvider(OAuthProvider):
         super().__init__(base_url=base_url)
 
     async def authorize(self, request: Request) -> Any:
-        # Redirect to our explicit login page
-        params = request.query_params
+        # Redirect to explicit login page
         login_url = f"{SERVER_URL}/login"
         
-        # Pass through the OAuth parameters
-        query = []
-        for key in ["client_id", "redirect_uri", "state"]:
-            if val := params.get(key):
-                query.append(f"{key}={val}")
-                
-        if query:
-            login_url += "?" + "&".join(query)
+        # Pass through all query parameters (including code_challenge)
+        if request.query_params:
+            import urllib.parse
+            login_url += "?" + urllib.parse.urlencode(dict(request.query_params))
             
         return RedirectResponse(login_url)
 
@@ -215,6 +210,8 @@ async def login_page(request: Request):
     client_id = params.get("client_id", "")
     redirect_uri = params.get("redirect_uri", "")
     state = params.get("state", "")
+    code_challenge = params.get("code_challenge", "")
+    code_challenge_method = params.get("code_challenge_method", "")
     
     html = f"""
     <html>
@@ -238,6 +235,8 @@ async def login_page(request: Request):
                 <input type="hidden" name="client_id" value="{client_id}">
                 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
                 <input type="hidden" name="state" value="{state}">
+                <input type="hidden" name="code_challenge" value="{code_challenge}">
+                <input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
                 
                 <input type="email" name="username" placeholder="Email (Linko Account)" required>
                 <input type="password" name="password" placeholder="Password" required>
@@ -258,6 +257,7 @@ async def login_submit(request: Request):
         password = form.get("password")
         redirect_uri = form.get("redirect_uri")
         state = form.get("state")
+        code_challenge = form.get("code_challenge")
         
         # 1. Verify credentials with Linko
         resp = http_requests.post(
@@ -279,7 +279,8 @@ async def login_submit(request: Request):
         code = secrets.token_urlsafe(32)
         AUTH_CODES[code] = {
             "linko_token": linko_token,
-            "expires_at": datetime.now().timestamp() + 300  # 5 minutes
+            "expires_at": datetime.now().timestamp() + 300,  # 5 minutes
+            "code_challenge": code_challenge
         }
         
         # 3. Redirect back to Custom GPT / Claude
