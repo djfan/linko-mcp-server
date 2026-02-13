@@ -275,7 +275,33 @@ def _extract_token_from_ctx(ctx: Context) -> str:
 # Setup FastAPI (for ChatGPT)
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Linko Hybrid Server", version="1.0")
+app = FastAPI(
+    title="Linko Hybrid Server",
+    version="1.0",
+    servers=[{"url": SERVER_URL}]
+)
+
+# Marketplace: Privacy Policy (Required for Public Actions)
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_policy():
+    return """
+    <html>
+        <head><title>Linko AI Privacy Policy</title></head>
+        <body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px;">
+            <h1>Privacy Policy</h1>
+            <p>The Linko AI Action accesses your Linko account only to search notes and resources upon your specific request.</p>
+            <p><strong>Data Usage:</strong> Your search queries and the returned notes/resources are processed transiently to provide the AI response. No personal data is stored on this intermediate server.</p>
+            <p><strong>Third Party:</strong> This service bridges ChatGPT/Claude to the Linko API (linko.study).</p>
+            <p><strong>Contact:</strong> For questions, please contact the developer.</p>
+        </body>
+    </html>
+    """
+
+# Marketplace: Domain Verification (Optional stub if OpenAI requires file upload)
+# If OpenAI gives you a code "openai-verify-token-123", return it here.
+@app.get("/.well-known/openai-domain-verification")
+async def openai_verification():
+    return "verify-token-from-openai"
 
 # Mount MCP endpoints (sse, messages, authorize, etc.) at /mcp
 # This handles all Claude traffic automatically
