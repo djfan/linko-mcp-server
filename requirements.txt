@@ -4,3 +4,6 @@ uvicorn
 requests
 httpx
 linko-mcp
+cryptography
+fastapi
+uvicorn
