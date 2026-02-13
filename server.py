@@ -234,4 +234,4 @@ async def get_subjects(ctx: Context) -> str:
 # ASGI app  (served by uvicorn)
 # ---------------------------------------------------------------------------
 
-app = mcp.get_asgi_app()
+app = mcp.http_app()
